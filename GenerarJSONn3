@@ -1,0 +1,319 @@
+Option Explicit
+
+Sub GenerarJSONn3()
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    Dim fila As Long, ultFila As Long, startRow As Long
+    Dim strOutput As String
+    
+    ' Variables de celdas
+    Dim cellV As Range, cellU As Range, cellW As Range, cellX As Range
+    Dim valV As String, valU As String, valW As String, valX As String
+    
+    ' --- CONFIGURACIÓN ---
+    Dim screenName As String, boardID As String, revStr As String, funcName As String, fileName As String
+    screenName = Trim(ws.Range("U2").Value)
+    boardID = Trim(ws.Range("U3").Value)
+    revStr = Trim(ws.Range("U4").Value)
+    funcName = Trim(ws.Range("U5").Value)
+    
+    If screenName = "" Or boardID = "" Or funcName = "" Then
+        MsgBox "Faltan datos en U2, U3, U4 o U5.", vbCritical
+        Exit Sub
+    End If
+    fileName = boardID & "_" & screenName & "_Rev" & revStr & ".txt"
+    
+    ' Variables Bars
+    Dim bar_inst As String, bar_ilk As String
+    Dim bar_sp As String, bar_en As String
+    Dim bar_enVal As String, bar_disVal As String
+    Dim barPendiente As Boolean, primerBar As Boolean
+    barPendiente = False: primerBar = True
+    
+    ' --- INICIO ---
+    ultFila = ws.Cells(ws.Rows.Count, "W").End(xlUp).Row
+    If ultFila < 8 Then ultFila = 8
+    startRow = 8
+    
+    ' Variables de Estado
+    Dim zonaActual As String, cardAbierta As Boolean, primerItem As Boolean
+    ' NUEVA VARIABLE: Controla si ya pusimos la coma antes de un comentario
+    Dim comaPendiente As Boolean
+    
+    zonaActual = "GENERAL": cardAbierta = False: primerItem = True: comaPendiente = False
+    
+    ' Encabezado Python
+    strOutput = "    def " & funcName & "(self, well_type):" & vbCrLf
+    strOutput = strOutput & "        return """ & boardID & """, {" & vbCrLf
+    strOutput = strOutput & "            ""general"": ["
+    
+    For fila = startRow To ultFila + 1
+        Set cellU = ws.Cells(fila, "U")
+        Set cellV = ws.Cells(fila, "V")
+        Set cellW = ws.Cells(fila, "W")
+        Set cellX = ws.Cells(fila, "X")
+        
+        valU = Trim(cellU.Value)
+        valV = Trim(cellV.Value)
+        valW = Trim(cellW.Value)
+        valX = Trim(cellX.Value)
+        
+        ' --- DETECCIÓN ZONA ---
+        If LCase(valV) = "bars" Then
+            If zonaActual = "GENERAL" Then strOutput = strOutput & vbCrLf & "            ],"
+            If zonaActual = "AUXILIARY" Then
+                If cardAbierta Then strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            }"
+                strOutput = strOutput & vbCrLf & "            ],"
+            End If
+            strOutput = strOutput & vbCrLf & "            ""bars"": ["
+            zonaActual = "BARS"
+            primerBar = True: barPendiente = False: primerItem = True: comaPendiente = False
+            GoTo SiguienteFila
+        End If
+        
+        If LCase(valV) = "generaltrends" Then
+            ' Escribir barra pendiente
+            If zonaActual = "BARS" And barPendiente Then
+                If Not primerBar Then strOutput = strOutput & ","
+                If bar_inst = "//" Or bar_inst = "" Then
+                    bar_inst = ""
+                    bar_ilk = "": bar_sp = "": bar_en = "": bar_enVal = "": bar_disVal = ""
+                End If
+                strOutput = strOutput & vbCrLf & "            {"
+                strOutput = strOutput & vbCrLf & "                ""instrumentPath"": """ & bar_inst & ""","
+                strOutput = strOutput & vbCrLf & "                ""interlockPathSP"": """ & bar_sp & ""","
+                strOutput = strOutput & vbCrLf & "                ""interlockPathEnable"": """ & bar_en & ""","
+                strOutput = strOutput & vbCrLf & "                ""interlockEnableValue"": """ & bar_enVal & ""","
+                strOutput = strOutput & vbCrLf & "                ""interlockDisableValue"": """ & bar_disVal & """"
+                strOutput = strOutput & vbCrLf & "            }"
+            End If
+            If zonaActual = "BARS" Then strOutput = strOutput & vbCrLf & "            ],"
+            strOutput = strOutput & vbCrLf & "            ""trends"": {" & vbCrLf
+            strOutput = strOutput & "                ""generalTrends"": ["
+            zonaActual = "GENERAL_TRENDS"
+            primerItem = True: comaPendiente = False
+            GoTo SiguienteFila
+        ElseIf LCase(valV) = "electricaltrends" Then
+            strOutput = strOutput & vbCrLf & "                ],"
+            strOutput = strOutput & vbCrLf & "                ""electricalTrends"": ["
+            zonaActual = "ELECTRICAL_TRENDS"
+            primerItem = True: comaPendiente = False
+            GoTo SiguienteFila
+        End If
+        
+        ' --- LÓGICA POR ZONA ---
+        
+        ' 1. GENERAL
+        If zonaActual = "GENERAL" Then
+            ' CASO COMENTARIO
+            If valU = "//" Then
+                ' Si hay un ítem anterior y no hemos puesto coma, la ponemos AHORA
+                If Not primerItem And Not comaPendiente Then
+                    strOutput = strOutput & ","
+                    comaPendiente = True ' Marcamos que ya la pusimos
+                End If
+                strOutput = strOutput & vbCrLf & "                # """ & valV & """"
+                
+            ' CASO CAMBIO A AUXILIARY (Se detecta por V lleno, U vacío)
+            ElseIf valV <> "" And valU = "" Then
+                strOutput = strOutput & vbCrLf & "            ],"
+                strOutput = strOutput & vbCrLf & "            ""auxiliary"": ["
+                strOutput = strOutput & vbCrLf & "            {"
+                strOutput = strOutput & vbCrLf & "                ""cardName"": u""" & valV & ""","
+                strOutput = strOutput & vbCrLf & "                ""data"": ["
+                zonaActual = "AUXILIARY"
+                cardAbierta = True
+                primerItem = True: comaPendiente = False
+                
+            ' CASO DATO VALIDO
+            ElseIf valU <> "" Then
+                If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
+                strOutput = strOutput & vbCrLf & "                """ & valU & """"
+                primerItem = False
+                comaPendiente = False ' Reiniciamos porque acabamos de escribir un ítem real
+            End If
+            
+        ' 2. AUXILIARY
+        ElseIf zonaActual = "AUXILIARY" Then
+            If valV <> "" And valU = "" Then
+                If cardAbierta Then strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            },"
+                strOutput = strOutput & vbCrLf & "            {"
+                strOutput = strOutput & vbCrLf & "                ""cardName"": u""" & valV & ""","
+                strOutput = strOutput & vbCrLf & "                ""data"": ["
+                cardAbierta = True
+                primerItem = True: comaPendiente = False
+            ElseIf cardAbierta Then
+                If valU = "//" Then
+                    If Not primerItem And Not comaPendiente Then
+                        strOutput = strOutput & ","
+                        comaPendiente = True
+                    End If
+                    strOutput = strOutput & vbCrLf & "                    # """ & valV & """"
+                ElseIf valU <> "" Then
+                    If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
+                    strOutput = strOutput & vbCrLf & "                    """ & valU & """"
+                    primerItem = False
+                    comaPendiente = False
+                End If
+            End If
+            
+        ' 3. BARS (Se mantiene lógica original, Bars es lista de objetos)
+        ElseIf zonaActual = "BARS" Then
+            If valV <> "" Then
+                If barPendiente Then
+                    If Not primerBar Then strOutput = strOutput & ","
+                    If bar_inst = "//" Or bar_inst = "" Then
+                        bar_inst = ""
+                        bar_ilk = "": bar_sp = "": bar_en = "": bar_enVal = "": bar_disVal = ""
+                    End If
+                    strOutput = strOutput & vbCrLf & "            {"
+                    strOutput = strOutput & vbCrLf & "                ""instrumentPath"": """ & bar_inst & ""","
+                    strOutput = strOutput & vbCrLf & "                ""interlockPathSP"": """ & bar_sp & ""","
+                    strOutput = strOutput & vbCrLf & "                ""interlockPathEnable"": """ & bar_en & ""","
+                    strOutput = strOutput & vbCrLf & "                ""interlockEnableValue"": """ & bar_enVal & ""","
+                    strOutput = strOutput & vbCrLf & "                ""interlockDisableValue"": """ & bar_disVal & """"
+                    strOutput = strOutput & vbCrLf & "            }"
+                    primerBar = False
+                End If
+                bar_inst = "": bar_ilk = "": bar_sp = ""
+                bar_en = "": bar_enVal = "": bar_disVal = ""
+                barPendiente = True
+            End If
+            Dim valorLimpio As String
+            If valU = "//" Then valorLimpio = "" Else valorLimpio = valU
+            Select Case LCase(Trim(valW))
+                Case "instrumentpath": bar_inst = valorLimpio
+                Case "interlockpath": bar_ilk = valorLimpio
+                Case "interlockpathsp": bar_sp = valorLimpio
+                Case "interlockpathenable": bar_en = valorLimpio
+                Case "interlockenablevalue": bar_enVal = valorLimpio
+                Case "interlockdisablevalue": bar_disVal = valorLimpio
+            End Select
+            
+        ' 4. TRENDS (APLICANDO LÓGICA DE COMA PENDIENTE + BLOQUE COMENTADO)
+        Else
+            Dim isEnabled As String
+            If UCase(valX) = "X" Or LCase(valX) = "TRUE" Then isEnabled = "True" Else isEnabled = "False"
+            Dim colorHex As String: colorHex = valW
+            If colorHex = "" Then colorHex = "#000000"
+            
+            ' CASO A: BLOQUE COMENTADO (Vacío o // con propiedades)
+            If (valU = "//" Or valU = "") And valV <> "" And (valW <> "" Or valX <> "") Then
+                 ' Si esto es un comentario, nos aseguramos que el ítem ANTERIOR tenga coma
+                 If Not primerItem And Not comaPendiente Then
+                     strOutput = strOutput & ","
+                     comaPendiente = True
+                 End If
+                 
+                 ' Escribimos el bloque comentado SIN coma al final
+                 strOutput = strOutput & vbCrLf & "                    #{"
+                 strOutput = strOutput & vbCrLf & "                    #    ""instrumentPath"": """", #" & valV
+                 strOutput = strOutput & vbCrLf & "                    #    ""color"": """ & colorHex & ""","
+                 strOutput = strOutput & vbCrLf & "                    #    ""enabled"": " & isEnabled
+                 strOutput = strOutput & vbCrLf & "                    #}"
+                 
+                 ' NO cambiamos primerItem a False porque esto "no cuenta" como ítem real para el parser JSON
+                 ' NO cambiamos comaPendiente a False, porque si viene otro ítem, debe poner coma basada en el anterior REAL.
+            
+            ' CASO B: OBJETO NORMAL
+            ElseIf valU <> "" And valU <> "//" Then
+                 If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
+                 
+                 strOutput = strOutput & vbCrLf & "                    {"
+                 strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": """ & valU & ""","
+                 strOutput = strOutput & vbCrLf & "                        ""color"": """ & colorHex & ""","
+                 strOutput = strOutput & vbCrLf & "                        ""enabled"": " & isEnabled
+                 strOutput = strOutput & vbCrLf & "                    }"
+                 
+                 primerItem = False
+                 comaPendiente = False
+                 
+            ' CASO C: COMENTARIO SIMPLE
+            ElseIf valU = "//" Or (valU = "" And valV <> "") Then
+                 If Not primerItem And Not comaPendiente Then
+                     strOutput = strOutput & ","
+                     comaPendiente = True
+                 End If
+                 strOutput = strOutput & vbCrLf & "                    # """ & valV & """"
+            End If
+        End If
+
+SiguienteFila:
+    Next fila
+    
+    ' --- CIERRES FINALES ---
+    If zonaActual = "ELECTRICAL_TRENDS" Or zonaActual = "GENERAL_TRENDS" Then
+        strOutput = strOutput & vbCrLf & "                ],"
+        strOutput = strOutput & vbCrLf & "                ""zafiroTrends"": ["
+        strOutput = strOutput & vbCrLf & "                    {"
+        strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": ""/PROD/GAS"","
+        strOutput = strOutput & vbCrLf & "                        ""color"": ""#ff7f0e"","
+        strOutput = strOutput & vbCrLf & "                        ""enabled"": True"
+        strOutput = strOutput & vbCrLf & "                    },"
+        strOutput = strOutput & vbCrLf & "                    {"
+        strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": ""/PROD/WATER"","
+        strOutput = strOutput & vbCrLf & "                        ""color"": ""#e377c2"","
+        strOutput = strOutput & vbCrLf & "                        ""enabled"": True"
+        strOutput = strOutput & vbCrLf & "                    },"
+        strOutput = strOutput & vbCrLf & "                    {"
+        strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": ""/PROD/OIL"","
+        strOutput = strOutput & vbCrLf & "                        ""color"": ""#1f77b4"","
+        strOutput = strOutput & vbCrLf & "                        ""enabled"": True"
+        strOutput = strOutput & vbCrLf & "                    },"
+        strOutput = strOutput & vbCrLf & "                    {"
+        strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": ""/PROD/FLUID"","
+        strOutput = strOutput & vbCrLf & "                        ""color"": ""#9467bd"","
+        strOutput = strOutput & vbCrLf & "                        ""enabled"": True"
+        strOutput = strOutput & vbCrLf & "                    }"
+        strOutput = strOutput & vbCrLf & "                ]"
+        strOutput = strOutput & vbCrLf & "            }"
+    ElseIf zonaActual = "BARS" Then
+        If barPendiente Then
+             If Not primerBar Then strOutput = strOutput & ","
+             If bar_inst = "//" Or bar_inst = "" Then
+                 bar_inst = ""
+                 bar_ilk = "": bar_sp = "": bar_en = "": bar_enVal = "": bar_disVal = ""
+             End If
+             strOutput = strOutput & vbCrLf & "            {"
+             strOutput = strOutput & vbCrLf & "                ""instrumentPath"": """ & bar_inst & ""","
+             strOutput = strOutput & vbCrLf & "                ""interlockPathSP"": """ & bar_sp & ""","
+             strOutput = strOutput & vbCrLf & "                ""interlockPathEnable"": """ & bar_en & ""","
+             strOutput = strOutput & vbCrLf & "                ""interlockEnableValue"": """ & bar_enVal & ""","
+             strOutput = strOutput & vbCrLf & "                ""interlockDisableValue"": """ & bar_disVal & """"
+             strOutput = strOutput & vbCrLf & "            }"
+        End If
+        strOutput = strOutput & vbCrLf & "            ],"
+        strOutput = strOutput & vbCrLf & "            ""trends"": {"
+        strOutput = strOutput & vbCrLf & "                ""zafiroTrends"": [ ... ]"
+        strOutput = strOutput & vbCrLf & "            }"
+    End If
+    
+    strOutput = strOutput & vbCrLf & "        }"
+    GuardarUniversalN3 strOutput, fileName
+End Sub
+
+Sub GuardarUniversalN3(texto As String, nombreArchivo As String)
+    Dim fso As Object, stream As Object
+    Dim rutaFolder As String, rutaCompleta As String
+    Dim diaDialog As FileDialog
+    Set diaDialog = Application.FileDialog(msoFileDialogFolderPicker)
+    With diaDialog
+        .Title = "Guardar: " & nombreArchivo
+        .AllowMultiSelect = False
+        On Error Resume Next
+        .InitialFileName = Application.ActiveWorkbook.Path
+        On Error GoTo 0
+        If .Show = -1 Then rutaFolder = .SelectedItems(1) Else Exit Sub
+    End With
+    If Right(rutaFolder, 1) <> "\" Then rutaFolder = rutaFolder & "\"
+    rutaCompleta = rutaFolder & nombreArchivo
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    On Error Resume Next
+    Set stream = fso.CreateTextFile(rutaCompleta, True)
+    If Err.Number <> 0 Then MsgBox "Error permisos", vbCritical: Exit Sub
+    On Error GoTo 0
+    stream.Write texto
+    stream.Close
+    MsgBox "Archivo N3 generado: " & vbCrLf & nombreArchivo, vbInformation
+End Sub
