@@ -36,12 +36,8 @@ Sub GenerarJSONn3()
     If ultFila < 8 Then ultFila = 8
     startRow = 8
     
-    ' Variables de Estado
-    Dim zonaActual As String, cardAbierta As Boolean, primerItem As Boolean
-    ' NUEVA VARIABLE: Controla si ya pusimos la coma antes de un comentario
-    Dim comaPendiente As Boolean
-    
-    zonaActual = "GENERAL": cardAbierta = False: primerItem = True: comaPendiente = False
+    Dim zonaActual As String, cardAbierta As Boolean
+    zonaActual = "GENERAL": cardAbierta = False
     
     ' Encabezado Python
     strOutput = "    def " & funcName & "(self, well_type):" & vbCrLf
@@ -68,12 +64,12 @@ Sub GenerarJSONn3()
             End If
             strOutput = strOutput & vbCrLf & "            ""bars"": ["
             zonaActual = "BARS"
-            primerBar = True: barPendiente = False: primerItem = True: comaPendiente = False
+            primerBar = True: barPendiente = False
             GoTo SiguienteFila
         End If
         
         If LCase(valV) = "generaltrends" Then
-            ' Escribir barra pendiente
+            ' Escribir barra pendiente si existe
             If zonaActual = "BARS" And barPendiente Then
                 If Not primerBar Then strOutput = strOutput & ","
                 If bar_inst = "//" Or bar_inst = "" Then
@@ -88,17 +84,16 @@ Sub GenerarJSONn3()
                 strOutput = strOutput & vbCrLf & "                ""interlockDisableValue"": """ & bar_disVal & """"
                 strOutput = strOutput & vbCrLf & "            }"
             End If
+            
             If zonaActual = "BARS" Then strOutput = strOutput & vbCrLf & "            ],"
             strOutput = strOutput & vbCrLf & "            ""trends"": {" & vbCrLf
             strOutput = strOutput & "                ""generalTrends"": ["
             zonaActual = "GENERAL_TRENDS"
-            primerItem = True: comaPendiente = False
             GoTo SiguienteFila
         ElseIf LCase(valV) = "electricaltrends" Then
             strOutput = strOutput & vbCrLf & "                ],"
             strOutput = strOutput & vbCrLf & "                ""electricalTrends"": ["
             zonaActual = "ELECTRICAL_TRENDS"
-            primerItem = True: comaPendiente = False
             GoTo SiguienteFila
         End If
         
@@ -106,16 +101,8 @@ Sub GenerarJSONn3()
         
         ' 1. GENERAL
         If zonaActual = "GENERAL" Then
-            ' CASO COMENTARIO
             If valU = "//" Then
-                ' Si hay un ítem anterior y no hemos puesto coma, la ponemos AHORA
-                If Not primerItem And Not comaPendiente Then
-                    strOutput = strOutput & ","
-                    comaPendiente = True ' Marcamos que ya la pusimos
-                End If
                 strOutput = strOutput & vbCrLf & "                # """ & valV & """"
-                
-            ' CASO CAMBIO A AUXILIARY (Se detecta por V lleno, U vacío)
             ElseIf valV <> "" And valU = "" Then
                 strOutput = strOutput & vbCrLf & "            ],"
                 strOutput = strOutput & vbCrLf & "            ""auxiliary"": ["
@@ -124,41 +111,30 @@ Sub GenerarJSONn3()
                 strOutput = strOutput & vbCrLf & "                ""data"": ["
                 zonaActual = "AUXILIARY"
                 cardAbierta = True
-                primerItem = True: comaPendiente = False
-                
-            ' CASO DATO VALIDO
             ElseIf valU <> "" Then
-                If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
                 strOutput = strOutput & vbCrLf & "                """ & valU & """"
-                primerItem = False
-                comaPendiente = False ' Reiniciamos porque acabamos de escribir un ítem real
+                If HaySiguienteItem(ws, fila, ultFila) Then strOutput = strOutput & ","
             End If
             
         ' 2. AUXILIARY
         ElseIf zonaActual = "AUXILIARY" Then
             If valV <> "" And valU = "" Then
                 If cardAbierta Then strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            },"
+                If cardAbierta Then strOutput = strOutput & ","
                 strOutput = strOutput & vbCrLf & "            {"
                 strOutput = strOutput & vbCrLf & "                ""cardName"": u""" & valV & ""","
                 strOutput = strOutput & vbCrLf & "                ""data"": ["
                 cardAbierta = True
-                primerItem = True: comaPendiente = False
             ElseIf cardAbierta Then
                 If valU = "//" Then
-                    If Not primerItem And Not comaPendiente Then
-                        strOutput = strOutput & ","
-                        comaPendiente = True
-                    End If
                     strOutput = strOutput & vbCrLf & "                    # """ & valV & """"
                 ElseIf valU <> "" Then
-                    If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
                     strOutput = strOutput & vbCrLf & "                    """ & valU & """"
-                    primerItem = False
-                    comaPendiente = False
+                    If HaySiguienteItem(ws, fila, ultFila) Then strOutput = strOutput & ","
                 End If
             End If
             
-        ' 3. BARS (Se mantiene lógica original, Bars es lista de objetos)
+        ' 3. BARS (Sin interlockPath)
         ElseIf zonaActual = "BARS" Then
             If valV <> "" Then
                 If barPendiente Then
@@ -182,6 +158,7 @@ Sub GenerarJSONn3()
             End If
             Dim valorLimpio As String
             If valU = "//" Then valorLimpio = "" Else valorLimpio = valU
+            
             Select Case LCase(Trim(valW))
                 Case "instrumentpath": bar_inst = valorLimpio
                 Case "interlockpath": bar_ilk = valorLimpio
@@ -191,50 +168,33 @@ Sub GenerarJSONn3()
                 Case "interlockdisablevalue": bar_disVal = valorLimpio
             End Select
             
-        ' 4. TRENDS (APLICANDO LÓGICA DE COMA PENDIENTE + BLOQUE COMENTADO)
+        ' 4. TRENDS (General & Electrical)
         Else
             Dim isEnabled As String
             If UCase(valX) = "X" Or LCase(valX) = "TRUE" Then isEnabled = "True" Else isEnabled = "False"
             Dim colorHex As String: colorHex = valW
             If colorHex = "" Then colorHex = "#000000"
             
-            ' CASO A: BLOQUE COMENTADO (Vacío o // con propiedades)
+            ' CASO A: Path Vacío o // con Propiedades -> BLOQUE COMENTADO
             If (valU = "//" Or valU = "") And valV <> "" And (valW <> "" Or valX <> "") Then
-                 ' Si esto es un comentario, nos aseguramos que el ítem ANTERIOR tenga coma
-                 If Not primerItem And Not comaPendiente Then
-                     strOutput = strOutput & ","
-                     comaPendiente = True
-                 End If
-                 
-                 ' Escribimos el bloque comentado SIN coma al final
                  strOutput = strOutput & vbCrLf & "                    #{"
                  strOutput = strOutput & vbCrLf & "                    #    ""instrumentPath"": """", #" & valV
                  strOutput = strOutput & vbCrLf & "                    #    ""color"": """ & colorHex & ""","
                  strOutput = strOutput & vbCrLf & "                    #    ""enabled"": " & isEnabled
                  strOutput = strOutput & vbCrLf & "                    #}"
-                 
-                 ' NO cambiamos primerItem a False porque esto "no cuenta" como ítem real para el parser JSON
-                 ' NO cambiamos comaPendiente a False, porque si viene otro ítem, debe poner coma basada en el anterior REAL.
             
-            ' CASO B: OBJETO NORMAL
+            ' CASO B: Objeto Válido Normal
             ElseIf valU <> "" And valU <> "//" Then
-                 If Not primerItem And Not comaPendiente Then strOutput = strOutput & ","
-                 
                  strOutput = strOutput & vbCrLf & "                    {"
                  strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": """ & valU & ""","
                  strOutput = strOutput & vbCrLf & "                        ""color"": """ & colorHex & ""","
                  strOutput = strOutput & vbCrLf & "                        ""enabled"": " & isEnabled
                  strOutput = strOutput & vbCrLf & "                    }"
                  
-                 primerItem = False
-                 comaPendiente = False
+                 If HaySiguienteItem(ws, fila, ultFila) Then strOutput = strOutput & ","
                  
-            ' CASO C: COMENTARIO SIMPLE
-            ElseIf valU = "//" Or (valU = "" And valV <> "") Then
-                 If Not primerItem And Not comaPendiente Then
-                     strOutput = strOutput & ","
-                     comaPendiente = True
-                 End If
+            ' CASO C: Comentario simple
+            ElseIf valU = "//" Then
                  strOutput = strOutput & vbCrLf & "                    # """ & valV & """"
             End If
         End If
@@ -292,6 +252,37 @@ SiguienteFila:
     strOutput = strOutput & vbCrLf & "        }"
     GuardarUniversalN3 strOutput, fileName
 End Sub
+
+' --- FUNCIÓN AUXILIAR LOOKAHEAD ---
+Function HaySiguienteItem(ws As Worksheet, fActual As Long, fFinal As Long) As Boolean
+    Dim f As Long
+    Dim vU As String, vV As String
+    
+    For f = fActual + 1 To fFinal
+        vU = Trim(ws.Cells(f, "U").Value)
+        vV = Trim(ws.Cells(f, "V").Value)
+        
+        ' 1. Si detecta cambio de zona o fin
+        If LCase(vV) = "generaltrends" Or LCase(vV) = "electricaltrends" Or LCase(vV) = "bars" Then
+            HaySiguienteItem = False
+            Exit Function
+        End If
+        
+        ' 2. Si detecta nueva Card
+        If vV <> "" And vU = "" Then
+            HaySiguienteItem = False
+            Exit Function
+        End If
+        
+        ' 3. Si encuentra un ITEM VÁLIDO (No vacío, No //)
+        If vU <> "" And vU <> "//" Then
+            HaySiguienteItem = True
+            Exit Function
+        End If
+    Next f
+    
+    HaySiguienteItem = False
+End Function
 
 Sub GuardarUniversalN3(texto As String, nombreArchivo As String)
     Dim fso As Object, stream As Object
