@@ -1,0 +1,277 @@
+Option Explicit
+
+Sub GenerarPCP2Nivel1()
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    Dim fila As Long, ultFila As Long, startRow As Long
+    Dim strOutput As String
+    
+    ' Variables de celdas
+    Dim cellX As Range, cellW As Range, cellV As Range, cellU As Range, cellT As Range
+    Dim cellY As Range, cellZ As Range
+    Dim valX As String, valW As String, valU As String, valV As String, valT As String
+    Dim valY As String, valZ As String
+    
+    ' --- CONFIGURACIÓN ---
+    Dim screenName As String, techName As String, revStr As String, funcName As String, fileName As String
+    
+    screenName = Trim(ws.Range("U2").Value)
+    techName = Trim(ws.Range("U3").Value)
+    revStr = Trim(ws.Range("U4").Value)
+    funcName = Trim(ws.Range("U5").Value)
+    
+    If screenName = "" Or techName = "" Or funcName = "" Then
+        MsgBox "Faltan datos de configuración en U2, U3, U4 o U5.", vbCritical
+        Exit Sub
+    End If
+    
+    fileName = techName & "_" & screenName & "_Rev" & revStr & ".txt"
+    
+    ' --- INICIO ---
+    ultFila = ws.Cells(ws.Rows.Count, "X").End(xlUp).Row
+    startRow = 8
+    
+    Dim zonaActual As String
+    Dim cardAbierta As Boolean
+    
+    zonaActual = "CARDS"
+    cardAbierta = False
+    
+    ' --- ENCABEZADO ---
+    strOutput = "    def " & funcName & "(self, well_type):" & vbCrLf
+    strOutput = strOutput & "        motor_type = ""IM""" & vbCrLf
+    strOutput = strOutput & "        return """ & techName & """, {" & vbCrLf
+    strOutput = strOutput & "            ""cards"": ["
+    
+    For fila = startRow To ultFila
+        Set cellX = ws.Cells(fila, "X")
+        Set cellW = ws.Cells(fila, "W")
+        Set cellU = ws.Cells(fila, "U")
+        Set cellT = ws.Cells(fila, "T")
+        Set cellY = ws.Cells(fila, "Y")
+        Set cellZ = ws.Cells(fila, "Z")
+        
+        valX = Trim(cellX.Value)
+        valW = Trim(cellW.Value)
+        valU = Trim(cellU.Value)
+        valT = Trim(cellT.Value)
+        valY = Trim(cellY.Value)
+        valZ = Trim(cellZ.Value)
+        
+        ' --- CAMBIO DE ZONA ---
+        If LCase(valX) = "generaltrends" Then
+            ' Cerrar última card LIMPIA (sin coma en el string)
+            If cardAbierta Then strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            }"
+            
+            ' Cerrar arreglo cards LIMPIO (sin coma en el string)
+            strOutput = strOutput & vbCrLf & "            ]"
+            strOutput = strOutput & "," ' <--- Coma programática ÚNICA
+            
+            strOutput = strOutput & vbCrLf
+            strOutput = strOutput & "            ""trends"": {" & vbCrLf
+            strOutput = strOutput & "                ""generalTrends"": ["
+            zonaActual = "GENERAL_TRENDS"
+            GoTo SiguienteFila
+            
+        ElseIf LCase(valX) = "electricaltrends" Then
+            ' Cerrar generalTrends LIMPIO
+            strOutput = strOutput & vbCrLf & "                ]"
+            strOutput = strOutput & "," ' <--- Coma programática ÚNICA
+            
+            strOutput = strOutput & vbCrLf & "                ""electricalTrends"": ["
+            zonaActual = "ELECTRICAL_TRENDS"
+            GoTo SiguienteFila
+        End If
+        
+        ' --- LÓGICA POR ZONA ---
+        If zonaActual = "CARDS" Then
+            ' 1. CABECERA CARD
+            If valX <> "" And valU = "" And valT = "" And valW <> "//" Then
+                If cardAbierta Then
+                    ' Cerrar anterior LIMPIA
+                    strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            }"
+                    strOutput = strOutput & "," ' <--- Coma entre cards
+                End If
+                
+                strOutput = strOutput & vbCrLf & "            {"
+                strOutput = strOutput & vbCrLf & "                ""cardName"": u""" & valX & ""","
+                strOutput = strOutput & vbCrLf & "                ""data"": ["
+                cardAbierta = True
+            
+            ' 2. DATOS CARD
+            ElseIf cardAbierta Then
+                If valW = "//" Then
+                    strOutput = strOutput & vbCrLf & "                    # """ & valX & """"
+                ElseIf valU <> "" Then
+                    If valT <> "" Then
+                        strOutput = strOutput & vbCrLf & "                    pcp2_card_tagPath(""" & valX & """, motor_type)"
+                    Else
+                        strOutput = strOutput & vbCrLf & "                    """ & valW & """"
+                    End If
+                    
+                    ' Lookahead para coma interna
+                    If HaySiguienteItemPCP2(ws, fila, ultFila) Then strOutput = strOutput & ","
+                End If
+            End If
+            
+        Else ' TRENDS
+            Dim isEnabled As String
+            If UCase(valZ) = "X" Or LCase(valZ) = "true" Then isEnabled = "True" Else isEnabled = "False"
+            Dim colorHex As String: colorHex = valY
+            If colorHex = "" Then colorHex = "#000000"
+            
+            ' A) Bloque Comentado
+            If (valU = "" Or valU = "//") And valX <> "" And (valW <> "" Or valZ <> "") Then
+                strOutput = strOutput & vbCrLf & "                    #{"
+                strOutput = strOutput & vbCrLf & "                    #    ""instrumentPath"": """", #" & valX
+                strOutput = strOutput & vbCrLf & "                    #    ""color"": """ & colorHex & ""","
+                strOutput = strOutput & vbCrLf & "                    #    ""enabled"": " & isEnabled
+                strOutput = strOutput & vbCrLf & "                    #}"
+            
+            ' B) Comentario Puro
+            ElseIf valW = "//" Then
+                strOutput = strOutput & vbCrLf & "                    # """ & valX & """"
+            
+            ' C) Dato
+            ElseIf valU <> "" Then
+                Dim finalPath As String
+                If valT <> "" Then
+                    finalPath = "pcp2_card_tagPath(""" & valX & """, motor_type)"
+                Else
+                    finalPath = """" & valW & """"
+                End If
+                
+                strOutput = strOutput & vbCrLf & "                    {"
+                strOutput = strOutput & vbCrLf & "                        ""instrumentPath"": " & finalPath & ","
+                strOutput = strOutput & vbCrLf & "                        ""color"": """ & colorHex & ""","
+                strOutput = strOutput & vbCrLf & "                        ""enabled"": " & isEnabled
+                strOutput = strOutput & vbCrLf & "                    }"
+                
+                If HaySiguienteItemPCP2(ws, fila, ultFila) Then strOutput = strOutput & ","
+            End If
+        End If
+SiguienteFila:
+    Next fila
+    
+    ' --- CIERRES FINALES ---
+    Dim strExtraTrends As String
+    strExtraTrends = ""
+    
+    ' Zafiro
+    strExtraTrends = strExtraTrends & vbCrLf & "                ""zafiroTrends"": ["
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/PROD/GAS"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#ff7f0e"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    },"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/PROD/WATER"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#e377c2"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    },"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/PROD/OIL"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#1f77b4"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    },"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/PROD/FLUID"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#9467bd"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    }"
+    strExtraTrends = strExtraTrends & vbCrLf & "                ],"
+    
+    ' Sonar
+    strExtraTrends = strExtraTrends & vbCrLf & "                ""sonarTrends"": ["
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/STATUS/MURAG_LEVEL"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#17becf"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    },"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    {"
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""instrumentPath"": ""/STATUS/SUMERGENCIA_MURAG"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""color"": ""#7f7f7f"","
+    strExtraTrends = strExtraTrends & vbCrLf & "                        ""enabled"": True"
+    strExtraTrends = strExtraTrends & vbCrLf & "                    }"
+    strExtraTrends = strExtraTrends & vbCrLf & "                ]"
+    
+    ' Inyección Final
+    If zonaActual = "ELECTRICAL_TRENDS" Then
+        ' Cierre LIMPIO de electrical
+        strOutput = strOutput & vbCrLf & "                ]"
+        strOutput = strOutput & "," ' <--- Coma UNICA
+        strOutput = strOutput & strExtraTrends
+        strOutput = strOutput & vbCrLf & "            }" ' Cierra trends
+        
+    ElseIf zonaActual = "CARDS" Then
+        If cardAbierta Then strOutput = strOutput & vbCrLf & "                ]" & vbCrLf & "            }"
+        
+        strOutput = strOutput & vbCrLf & "            ]," ' Cierra cards array
+        strOutput = strOutput & "," ' <--- Coma UNICA
+        strOutput = strOutput & vbCrLf & "            ""trends"": {"
+        strOutput = strOutput & strExtraTrends
+        strOutput = strOutput & vbCrLf & "            }"
+    End If
+    
+    strOutput = strOutput & vbCrLf & "        }"
+    
+    GuardarArchivoDinamico strOutput, fileName
+End Sub
+
+' --- FUNCIÓN LOOKAHEAD PARA PCP2 ---
+Function HaySiguienteItemPCP2(ws As Worksheet, fActual As Long, fFinal As Long) As Boolean
+    Dim f As Long
+    Dim vX As String, vU As String, vW As String
+    
+    For f = fActual + 1 To fFinal
+        vX = Trim(ws.Cells(f, "X").Value)
+        vU = Trim(ws.Cells(f, "U").Value)
+        vW = Trim(ws.Cells(f, "W").Value)
+        
+        ' Fin de zona
+        If LCase(vX) = "generaltrends" Or LCase(vX) = "electricaltrends" Then
+            HaySiguienteItemPCP2 = False
+            Exit Function
+        End If
+        
+        ' Nueva Card (X lleno, U vacio, W no es //)
+        If vX <> "" And vU = "" And vW <> "//" Then
+            HaySiguienteItemPCP2 = False
+            Exit Function
+        End If
+        
+        ' Ítem Válido
+        If vU <> "" And vU <> "//" Then
+            HaySiguienteItemPCP2 = True
+            Exit Function
+        End If
+    Next f
+    
+    HaySiguienteItemPCP2 = False
+End Function
+
+Sub GuardarArchivoDinamico(texto As String, nombreArchivo As String)
+    Dim fso As Object, stream As Object
+    Dim rutaFolder As String, rutaCompleta As String
+    Dim diaDialog As FileDialog
+    Set diaDialog = Application.FileDialog(msoFileDialogFolderPicker)
+    With diaDialog
+        .Title = "Guardar: " & nombreArchivo
+        .AllowMultiSelect = False
+        On Error Resume Next
+        .InitialFileName = Application.ActiveWorkbook.Path
+        On Error GoTo 0
+        If .Show = -1 Then rutaFolder = .SelectedItems(1) Else Exit Sub
+    End With
+    If Right(rutaFolder, 1) <> "\" Then rutaFolder = rutaFolder & "\"
+    rutaCompleta = rutaFolder & nombreArchivo
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    On Error Resume Next
+    Set stream = fso.CreateTextFile(rutaCompleta, True)
+    If Err.Number <> 0 Then MsgBox "Error permisos", vbCritical: Exit Sub
+    On Error GoTo 0
+    stream.Write texto
+    stream.Close
+    MsgBox "Archivo generado: " & vbCrLf & nombreArchivo, vbInformation
+End Sub
